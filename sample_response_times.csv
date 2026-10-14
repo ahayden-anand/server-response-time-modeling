@@ -1,0 +1,17 @@
+timestamp,server,endpoint,response_time_ms,status_code
+2026-10-01T09:00:00,api-east,/health,82.4,200
+2026-10-01T09:05:00,api-west,/health,94.1,200
+2026-10-01T09:10:00,api-east,/orders,156.8,201
+2026-10-01T09:15:00,api-west,/orders,211.3,500
+2026-10-01T09:20:00,api-central,/users,68.9,200
+2026-10-01T09:25:00,api-east,/products,117.6,200
+2026-10-02T10:00:00,api-east,/users,121.2,200
+2026-10-02T10:05:00,api-west,/users,103.7,200
+2026-10-02T10:10:00,api-central,/orders,189.5,201
+2026-10-02T10:15:00,api-east,/health,76.8,200
+2026-10-03T11:00:00,api-east,/orders,179.4,200
+2026-10-03T11:05:00,api-west,/orders,142.9,200
+2026-10-03T11:10:00,api-central,/health,59.6,200
+2026-10-03T11:15:00,api-west,/products,132.1,200
+2026-10-04T08:30:00,api-east,/products,247.8,503
+2026-10-04T08:35:00,api-central,/users,88.3,200
