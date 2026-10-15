@@ -14,6 +14,16 @@ from statistical_analysis import (
     descriptive_statistics,
     estimate_exponential_rate,
     estimated_mean_response_time,
+    exponential_cdf,
+    survival_probability,
+)
+from distribution_modeling import (
+    calculate_distribution_comparison_metrics,
+    compute_ecdf_comparison,
+    compute_histogram_data,
+    format_interval_label,
+    generate_distribution_curves,
+    interval_probability,
 )
 
 st.set_page_config(
@@ -145,6 +155,107 @@ else:
             "uploaded or generated **cleaned dataset**, not the sample generator's "
             "configured rate."
         )
+
+        st.divider()
+        st.subheader("Probability Calculator")
+        calc_col1, calc_col2 = st.columns([1, 2])
+
+        dataset_token = f"{source_kind}_{response_column}_{len(cleaned_data)}"
+        if st.session_state.get("_prev_dataset_token") != dataset_token:
+            st.session_state["_prev_dataset_token"] = dataset_token
+            st.session_state.pop("prob_threshold_t", None)
+            st.session_state.pop("prob_lower_a", None)
+            st.session_state.pop("prob_upper_b", None)
+
+        default_t = float(round(statistics.median, 2))
+        default_a = float(round(statistics.minimum, 2))
+        default_b = float(round(statistics.mean, 2))
+        if default_a > default_b:
+            default_b = default_a + 10.0
+
+        with calc_col1:
+            st.markdown("**Threshold Probability: $P(X \\le t)$ and $P(X > t)$**")
+            threshold_t = st.number_input(
+                "Time threshold t (ms)",
+                min_value=0.0,
+                value=default_t,
+                step=1.0,
+                key="prob_threshold_t",
+            )
+            prob_le = float(exponential_cdf(estimated_rate, threshold_t))
+            prob_gt = float(survival_probability(estimated_rate, threshold_t))
+
+            m_col1, m_col2 = st.columns(2)
+            m_col1.metric("P(X ≤ t)", f"{prob_le:.4f}", f"{prob_le * 100:.2f}%")
+            m_col2.metric("P(X > t)", f"{prob_gt:.4f}", f"{prob_gt * 100:.2f}%")
+
+        with calc_col2:
+            st.markdown("**Interval Probability: $P(a \\le X \\le b)$**")
+            b_col1, b_col2 = st.columns(2)
+            lower_a = b_col1.number_input(
+                "Lower bound a (ms)",
+                min_value=0.0,
+                value=default_a,
+                step=1.0,
+                key="prob_lower_a",
+            )
+            upper_b = b_col2.number_input(
+                "Upper bound b (ms)",
+                min_value=0.0,
+                value=default_b,
+                step=1.0,
+                key="prob_upper_b",
+            )
+            if lower_a <= upper_b:
+                prob_ab = interval_probability(estimated_rate, lower_a, upper_b)
+                interval_label = format_interval_label(lower_a, upper_b)
+                st.metric(
+                    interval_label,
+                    f"{prob_ab:.4f}",
+                    f"{prob_ab * 100:.2f}%",
+                )
+            else:
+                st.error("Lower bound a must be less than or equal to upper bound b.")
+
+        st.subheader("Interactive Distribution Graphs")
+        hist_bins = st.slider(
+            "Histogram bins",
+            min_value=5,
+            max_value=50,
+            value=20,
+            step=1,
+            key="hist_bins_slider",
+        )
+        hist_df = compute_histogram_data(cleaned_data[response_column], bins=hist_bins)
+        st.markdown("**Observed Response-Time Histogram**")
+        st.bar_chart(hist_df, x="bin_label", y="count")
+
+        max_curve_time = float(max(float(statistics.maximum) * 1.05, estimated_mean * 3.5))
+        curve_df = generate_distribution_curves(
+            estimated_rate, max_time=max_curve_time, points=200
+        )
+        graph_col1, graph_col2 = st.columns(2)
+        with graph_col1:
+            st.markdown("**Theoretical Exponential PDF ($f(t) = \\lambda e^{-\\lambda t}$)**")
+            st.line_chart(curve_df, x="time_ms", y="pdf")
+        with graph_col2:
+            st.markdown("**Theoretical Exponential CDF ($F(t) = 1 - e^{-\\lambda t}$)**")
+            st.line_chart(curve_df, x="time_ms", y="cdf")
+
+        st.subheader("Observed vs. Theoretical Distribution Comparison")
+        st.markdown("**Empirical CDF vs. Theoretical CDF**")
+        sorted_observations = (
+            cleaned_data[response_column].sort_values().reset_index(drop=True)
+        )
+        ecdf_df = compute_ecdf_comparison(sorted_observations, estimated_rate)
+        st.line_chart(ecdf_df, x="time_ms", y=["Empirical CDF", "Theoretical CDF"])
+
+        st.markdown("**Distribution Comparison Metrics**")
+        comparison_metrics = calculate_distribution_comparison_metrics(
+            cleaned_data[response_column], estimated_rate
+        )
+        st.dataframe(comparison_metrics.to_frame(), width="stretch", hide_index=True)
+
 
 st.download_button(
     "Download cleaned CSV",
