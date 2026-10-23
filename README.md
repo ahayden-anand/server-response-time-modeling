@@ -62,10 +62,48 @@ survival_after_100_ms = survival_probability(rate_per_ms, 100)
 
 Pass the cleaned response-time column (in ms), not the sample generator's configured rate, when estimating `λ̂`.
 
+## Distribution modeling API (Member 3)
+
+The `distribution_modeling.py` module provides distribution comparison and interval analysis:
+
+- `interval_probability(rate, lower, upper)` calculates $P(a \le X \le b)$ for an exponential distribution.
+- `generate_distribution_curves(rate, max_time, points)` produces points for theoretical PDF and CDF curves.
+- `compute_histogram_data(observations, bins)` generates binned histogram frequencies and densities.
+- `compare_observed_and_theoretical(observations, rate, bins)` computes observed vs. theoretical counts per bin.
+- `calculate_distribution_comparison_metrics(observations, rate)` computes observed vs theoretical means, medians, standard deviations, and the exact two-sided Kolmogorov-Smirnov (KS) statistic.
+- `compute_ecdf_comparison(observations, rate)` calculates empirical and theoretical CDF values.
+
+## Performance analysis and SLA API (Member 4)
+
+The `performance_analysis.py` module evaluates server response-time latency percentiles, Service Level Agreement (SLA) threshold compliance, and categorical group comparisons:
+
+- `theoretical_exponential_percentile(rate, percentile)` calculates the exact theoretical exponential percentile $Q(p) = -\ln(1-p)/\lambda$ in ms.
+- `calculate_percentiles(observations, rate, percentiles)` computes empirical percentiles (P50, P75, P90, P95, P99 using standard linear interpolation) and compares them against theoretical exponential percentiles with absolute and relative differences.
+- `evaluate_sla_compliance(observations, sla_threshold_ms, target_compliance_percentage)` evaluates response times against an SLA threshold $T_{\text{sla}}$, returning total, compliant, and breached counts, compliance rate (%), and a PASS/FAIL status.
+- `compare_group_performance(frame, response_column, group_column, sla_threshold_ms)` computes request count, mean, median, P95, min, max, and SLA compliance grouped by columns such as server or endpoint.
+
+## Reporting and export API (Member 4)
+
+The `reporting.py` module generates comprehensive analysis artifacts for download:
+
+- `generate_json_report(...)` produces a complete, JSON-serializable structured report containing validation metrics, descriptive statistics, exponential model parameters, latency percentiles, SLA evaluation, and goodness-of-fit indicators.
+- `generate_markdown_report(...)` formats a clean, human-readable executive Markdown report summarizing data quality, tail latency, SLA status, and model fit.
+- `generate_summary_csv(...)` creates a consolidated tabular CSV comparing observed and theoretical performance metrics.
+
+In the Streamlit interface, users can download the cleaned dataset (CSV), full analysis report (JSON), executive report (Markdown), and metrics summary (CSV).
+
 ## Tests
 
+Run the full automated test suite using:
+
 ```powershell
-pytest -q
+.\.venv\Scripts\python -m pytest -v
 ```
 
-The suite includes both the data-management tests and statistical-analysis tests.
+The suite includes 136 tests across:
+- `tests/test_data_management.py`: CSV loading, validation, and sample generation tests.
+- `tests/test_statistical_analysis.py`: Descriptive statistics, rate estimation, and distribution function tests.
+- `tests/test_distribution_modeling.py`: Interval probabilities, curves, histograms, and KS metrics tests.
+- `tests/test_performance_analysis.py`: Percentiles, SLA compliance, and group comparison tests.
+- `tests/test_reporting.py`: JSON schema validation, Markdown formatting, and CSV summary tests.
+- `tests/test_integration.py`: End-to-end integration workflows with real and generated data.
