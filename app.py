@@ -25,6 +25,16 @@ from distribution_modeling import (
     generate_distribution_curves,
     interval_probability,
 )
+from performance_analysis import (
+    calculate_percentiles,
+    compare_group_performance,
+    evaluate_sla_compliance,
+)
+from reporting import (
+    generate_json_report,
+    generate_markdown_report,
+    generate_summary_csv,
+)
 
 st.set_page_config(
     page_title="Server Response Time Modeling",
@@ -256,11 +266,157 @@ else:
         )
         st.dataframe(comparison_metrics.to_frame(), width="stretch", hide_index=True)
 
+        st.subheader("Performance Analysis & SLA Evaluation")
 
-st.download_button(
-    "Download cleaned CSV",
-    cleaned_data.to_csv(index=False).encode("utf-8"),
-    "cleaned_response_times.csv",
-    "text/csv",
-    disabled=cleaned_data.empty,
-)
+        st.markdown("**Latency Percentiles (Observed vs. Theoretical)**")
+        percentiles_df = calculate_percentiles(cleaned_data[response_column], estimated_rate)
+        disp_pct = percentiles_df.copy()
+        disp_pct["Observed (ms)"] = disp_pct["Observed_ms"].apply(lambda v: f"{v:.4f}")
+        disp_pct["Theoretical (ms)"] = disp_pct["Theoretical_ms"].apply(lambda v: f"{v:.4f}")
+        disp_pct["Difference (ms)"] = disp_pct["Difference_ms"].apply(lambda v: f"{v:+.4f}")
+        disp_pct["Relative Diff (%)"] = disp_pct["Relative_Difference_pct"].apply(lambda v: f"{v:+.2f}%")
+        st.dataframe(
+            disp_pct[["Percentile", "Observed (ms)", "Theoretical (ms)", "Difference (ms)", "Relative Diff (%)"]],
+            width="stretch",
+            hide_index=True,
+        )
+
+        st.markdown("**Service Level Agreement (SLA) Compliance**")
+        sla_col1, sla_col2 = st.columns(2)
+        default_sla_thresh = float(round(percentiles_df.loc[percentiles_df["Percentile"] == "P95", "Observed_ms"].iloc[0], 2))
+        sla_thresh_input = sla_col1.number_input(
+            "SLA response-time threshold (ms)",
+            min_value=0.1,
+            value=default_sla_thresh,
+            step=5.0,
+            key="sla_threshold_input",
+        )
+        sla_target_input = sla_col2.number_input(
+            "Target compliance percentage (%)",
+            min_value=1.0,
+            max_value=100.0,
+            value=95.0,
+            step=0.5,
+            key="sla_target_input",
+        )
+        sla_result = evaluate_sla_compliance(
+            cleaned_data[response_column],
+            sla_threshold_ms=sla_thresh_input,
+            target_compliance_percentage=sla_target_input,
+        )
+
+        sla_m1, sla_m2, sla_m3, sla_m4 = st.columns(4)
+        sla_m1.metric("Target SLA", f"{sla_result.target_compliance_percentage:.1f}%")
+        sla_m2.metric(
+            "Actual Compliance",
+            f"{sla_result.actual_compliance_percentage:.2f}%",
+            delta=f"{sla_result.actual_compliance_percentage - sla_result.target_compliance_percentage:+.2f}%",
+        )
+        sla_m3.metric("Compliant Requests", f"{sla_result.compliant_requests:,} / {sla_result.total_requests:,}")
+        sla_m4.metric("Breached Requests", f"{sla_result.breached_requests:,}")
+
+        if sla_result.is_compliant:
+            st.success(
+                f"SLA Target Met: {sla_result.actual_compliance_percentage:.2f}% of requests met the "
+                f"{sla_result.sla_threshold_ms:.1f} ms threshold (target: {sla_result.target_compliance_percentage:.1f}%)."
+            )
+        else:
+            st.error(
+                f"SLA Target Breached: Only {sla_result.actual_compliance_percentage:.2f}% of requests met the "
+                f"{sla_result.sla_threshold_ms:.1f} ms threshold (target: {sla_result.target_compliance_percentage:.1f}%)."
+            )
+
+        candidate_group_cols = [c for c in cleaned_data.columns if c != response_column]
+        if candidate_group_cols:
+            st.markdown("**Sub-Group Performance Comparison**")
+            selected_group_col = st.selectbox(
+                "Compare performance across",
+                candidate_group_cols,
+                key="group_perf_col",
+            )
+            group_df = compare_group_performance(
+                cleaned_data,
+                response_column=response_column,
+                group_column=selected_group_col,
+                sla_threshold_ms=sla_thresh_input,
+            )
+            st.dataframe(group_df, width="stretch", hide_index=True)
+        else:
+            group_df = None
+            selected_group_col = None
+
+        json_report_str = generate_json_report(
+            source_kind=source_kind,
+            response_column=response_column,
+            validation_report=report,
+            descriptive_stats=statistics,
+            estimated_rate=estimated_rate,
+            estimated_mean=estimated_mean,
+            percentiles_df=percentiles_df,
+            sla_result=sla_result,
+            comparison_metrics=comparison_metrics,
+            group_comparison_df=group_df,
+            group_column=selected_group_col if candidate_group_cols else None,
+        )
+        md_report_str = generate_markdown_report(
+            source_kind=source_kind,
+            response_column=response_column,
+            validation_report=report,
+            descriptive_stats=statistics,
+            estimated_rate=estimated_rate,
+            estimated_mean=estimated_mean,
+            percentiles_df=percentiles_df,
+            sla_result=sla_result,
+            comparison_metrics=comparison_metrics,
+            group_comparison_df=group_df,
+            group_column=selected_group_col if candidate_group_cols else None,
+        )
+        summary_csv_str = generate_summary_csv(
+            descriptive_stats=statistics,
+            estimated_rate=estimated_rate,
+            estimated_mean=estimated_mean,
+            percentiles_df=percentiles_df,
+            sla_result=sla_result,
+            comparison_metrics=comparison_metrics,
+        )
+
+
+st.divider()
+st.subheader("Export & Download Results")
+dl_col1, dl_col2, dl_col3, dl_col4 = st.columns(4)
+with dl_col1:
+    st.download_button(
+        "Download cleaned CSV",
+        cleaned_data.to_csv(index=False).encode("utf-8"),
+        "cleaned_response_times.csv",
+        "text/csv",
+        disabled=cleaned_data.empty,
+        key="download_cleaned_csv",
+    )
+with dl_col2:
+    st.download_button(
+        "Download Analysis Report (JSON)",
+        json_report_str.encode("utf-8") if not cleaned_data.empty and "json_report_str" in locals() else b"",
+        "response_time_analysis.json",
+        "application/json",
+        disabled=cleaned_data.empty,
+        key="download_json_report",
+    )
+with dl_col3:
+    st.download_button(
+        "Download Executive Report (MD)",
+        md_report_str.encode("utf-8") if not cleaned_data.empty and "md_report_str" in locals() else b"",
+        "response_time_report.md",
+        "text/markdown",
+        disabled=cleaned_data.empty,
+        key="download_md_report",
+    )
+with dl_col4:
+    st.download_button(
+        "Download Metrics Summary (CSV)",
+        summary_csv_str.encode("utf-8") if not cleaned_data.empty and "summary_csv_str" in locals() else b"",
+        "performance_metrics_summary.csv",
+        "text/csv",
+        disabled=cleaned_data.empty,
+        key="download_summary_csv",
+    )
