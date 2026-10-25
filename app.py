@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from data_management import (
@@ -21,13 +22,11 @@ from distribution_modeling import (
     calculate_distribution_comparison_metrics,
     compute_ecdf_comparison,
     compute_histogram_data,
-    format_interval_label,
     generate_distribution_curves,
     interval_probability,
 )
 from performance_analysis import (
     calculate_percentiles,
-    compare_group_performance,
     evaluate_sla_compliance,
 )
 from reporting import (
@@ -41,6 +40,35 @@ st.set_page_config(
     page_icon=":material/timer:",
     layout="wide",
 )
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+    [data-testid="stMetric"] {
+        min-height: 6.25rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def show_formula_metric(
+    column: st.delta_generator.DeltaGenerator,
+    label: str,
+    value: str,
+    formula: str,
+) -> None:
+    with column:
+        with st.container(border=True):
+            st.markdown(f"**{label}**")
+            st.caption(f"${formula}$")
+            st.markdown(f"### {value}")
+
+
 st.title("Server Response Time Modeling Using Exponential Distribution")
 st.caption("Load, generate, validate, clean, and export response-time data.")
 
@@ -98,16 +126,6 @@ except (ValueError, TypeError) as error:
 
 st.session_state["member1_cleaned_data"] = cleaned_data
 
-st.subheader("Validation report")
-st.write(
-    f"Valid rows: {report.valid_rows} of {report.total_rows}; "
-    f"excluded rows: {report.invalid_rows}."
-)
-st.dataframe(report.to_frame(), width="stretch", hide_index=True)
-
-st.subheader("Cleaned dataset")
-st.dataframe(cleaned_data, width="stretch", hide_index=True)
-
 if cleaned_data.empty:
     st.warning(
         "No valid response-time observations remain. "
@@ -121,54 +139,117 @@ else:
     except ValueError as error:
         st.error(f"Statistical analysis could not be calculated: {error}")
     else:
-        st.subheader("Statistical analysis")
-        first_row = st.columns(4)
-        first_row[0].metric("Valid observations", statistics.count)
-        first_row[1].metric("Mean response time (ms)", f"{statistics.mean:.6g}")
-        first_row[2].metric("Median response time (ms)", f"{statistics.median:.6g}")
-        first_row[3].metric("Minimum response time (ms)", f"{statistics.minimum:.6g}")
-
-        second_row = st.columns(4)
-        second_row[0].metric("Maximum response time (ms)", f"{statistics.maximum:.6g}")
-        second_row[1].metric(
-            "Population variance (ms²)",
-            f"{statistics.population_variance:.6g}",
-        )
-        second_row[2].metric(
-            "Population standard deviation (ms)",
-            f"{statistics.population_standard_deviation:.6g}",
-        )
-        second_row[3].metric(
-            "Sample variance (ms²)",
-            (
-                f"{statistics.sample_variance:.6g}"
-                if statistics.sample_variance is not None
-                else "Not defined (n < 2)"
-            ),
+        st.subheader("Statistical Analysis")
+        st.caption(
+            "Empirical statistics summarize validated observations. Model-based "
+            "probabilities below use the fitted exponential distribution."
         )
 
-        third_row = st.columns(3)
-        third_row[0].metric(
-            "Sample standard deviation (ms)",
-            (
-                f"{statistics.sample_standard_deviation:.6g}"
-                if statistics.sample_standard_deviation is not None
-                else "Not defined (n < 2)"
-            ),
-        )
-        third_row[1].metric("Estimated rate λ (1/ms)", f"{estimated_rate:.6g}")
-        third_row[2].metric("Estimated mean 1/λ (ms)", f"{estimated_mean:.6g}")
-        st.markdown(
-            "For an exponential model, the maximum-likelihood rate estimate is "
-            r"$\hat{\lambda}=1/\bar{x}$, where $\bar{x}$ is the mean of the "
-            "validated observations above. The estimate therefore uses the "
-            "uploaded or generated **cleaned dataset**, not the sample generator's "
-            "configured rate."
-        )
+        with st.container(border=True):
+            st.markdown("**Dataset Summary**")
+            summary_cols = st.columns(3)
+            summary_cols[0].metric(
+                "Valid observations",
+                f"{statistics.count:,}",
+                help="Number of finite, strictly positive response times used in this analysis.",
+            )
+            show_formula_metric(
+                summary_cols[1],
+                "Minimum (x_min) · ms",
+                f"{statistics.minimum:.6g}",
+                r"x_{\min}=\min(x_1,\ldots,x_n)",
+            )
+            show_formula_metric(
+                summary_cols[2],
+                "Maximum (x_max) · ms",
+                f"{statistics.maximum:.6g}",
+                r"x_{\max}=\max(x_1,\ldots,x_n)",
+            )
+
+        with st.container(border=True):
+            st.markdown("**Descriptive Statistics · Empirical**")
+            descriptive_cols = st.columns(3)
+            show_formula_metric(
+                descriptive_cols[0],
+                "Mean (x̄) · ms",
+                f"{statistics.mean:.6g}",
+                r"\bar{x}=\frac{1}{n}\sum_{i=1}^{n}x_i",
+            )
+            show_formula_metric(
+                descriptive_cols[1],
+                "Median (x̃) · ms",
+                f"{statistics.median:.6g}",
+                r"\tilde{x}=\text{middle value of sorted observations}",
+            )
+            show_formula_metric(
+                descriptive_cols[2],
+                "Population variance (σ²) · ms²",
+                f"{statistics.population_variance:.6g}",
+                r"\sigma^2=\frac{1}{n}\sum_{i=1}^{n}(x_i-\bar{x})^2",
+            )
+            descriptive_cols = st.columns(3)
+            show_formula_metric(
+                descriptive_cols[0],
+                "Population standard deviation (σ) · ms",
+                f"{statistics.population_standard_deviation:.6g}",
+                r"\sigma=\sqrt{\sigma^2}",
+            )
+            show_formula_metric(
+                descriptive_cols[1],
+                "Sample variance (s²) · ms²",
+                (
+                    f"{statistics.sample_variance:.6g}"
+                    if statistics.sample_variance is not None
+                    else "Not defined (n < 2)"
+                ),
+                r"s^2=\frac{1}{n-1}\sum_{i=1}^{n}(x_i-\bar{x})^2",
+            )
+            show_formula_metric(
+                descriptive_cols[2],
+                "Sample standard deviation (s) · ms",
+                (
+                    f"{statistics.sample_standard_deviation:.6g}"
+                    if statistics.sample_standard_deviation is not None
+                    else "Not defined (n < 2)"
+                ),
+                r"s=\sqrt{s^2}",
+            )
+            st.caption("Sample variance and standard deviation are undefined when n < 2.")
+
+        with st.container(border=True):
+            st.markdown("**Exponential Model Parameters · Fitted**")
+            model_cols = st.columns(2)
+            show_formula_metric(
+                model_cols[0],
+                "Estimated rate (λ̂) · 1/ms",
+                f"{estimated_rate:.6g}",
+                r"\hat{\lambda}=\frac{1}{\bar{x}}",
+            )
+            show_formula_metric(
+                model_cols[1],
+                "Estimated mean (E(X) = 1/λ̂) · ms",
+                f"{estimated_mean:.6g}",
+                r"E(X)=\frac{1}{\hat{\lambda}}=\bar{x}",
+            )
+            st.caption(
+                r"$X$ is server response time, $x_i$ is an observed response time, "
+                r"and $\lambda$ is the exponential rate in $1/\mathrm{ms}$. "
+                r"With observed mean $\bar{x}$, $\hat{\lambda}=1/\bar{x}$."
+            )
+            st.caption("Theoretical moments for the fitted model:")
+            st.latex(
+                r"E(X)=\frac{1}{\lambda},\qquad "
+                r"\operatorname{Var}(X)=\frac{1}{\lambda^2},\qquad "
+                r"\sigma=\frac{1}{\lambda}"
+            )
 
         st.divider()
-        st.subheader("Probability Calculator")
-        calc_col1, calc_col2 = st.columns([1, 2])
+        st.subheader("Exponential Distribution Probabilities")
+        st.caption(
+            r"Here, $X$ is server response time and $\lambda=\hat{\lambda}$ is the "
+            r"estimated rate in $1/\mathrm{ms}$."
+        )
+        calc_col1, calc_col2 = st.columns(2)
 
         dataset_token = f"{source_kind}_{response_column}_{len(cleaned_data)}"
         if st.session_state.get("_prev_dataset_token") != dataset_token:
@@ -183,8 +264,8 @@ else:
         if default_a > default_b:
             default_b = default_a + 10.0
 
-        with calc_col1:
-            st.markdown("**Threshold Probability: $P(X \\le t)$ and $P(X > t)$**")
+        with calc_col1, st.container(border=True):
+            st.markdown("**Probability of Response Time Within Threshold**")
             threshold_t = st.number_input(
                 "Time threshold t (ms)",
                 min_value=0.0,
@@ -196,11 +277,24 @@ else:
             prob_gt = float(survival_probability(estimated_rate, threshold_t))
 
             m_col1, m_col2 = st.columns(2)
-            m_col1.metric("P(X ≤ t)", f"{prob_le:.4f}", f"{prob_le * 100:.2f}%")
-            m_col2.metric("P(X > t)", f"{prob_gt:.4f}", f"{prob_gt * 100:.2f}%")
+            show_formula_metric(
+                m_col1,
+                "P(X ≤ t) · within threshold",
+                f"{prob_le * 100:.2f}%",
+                r"P(X\leq t)=1-e^{-\hat{\lambda}t}",
+            )
+            m_col1.caption(f"Decimal probability: {prob_le:.6f}")
+            show_formula_metric(
+                m_col2,
+                "P(X > t) · exceeds threshold",
+                f"{prob_gt * 100:.2f}%",
+                r"P(X>t)=e^{-\hat{\lambda}t}",
+            )
+            m_col2.caption(f"Decimal probability: {prob_gt:.6f}")
+            st.caption("These are model probabilities for a response time measured in milliseconds.")
 
-        with calc_col2:
-            st.markdown("**Interval Probability: $P(a \\le X \\le b)$**")
+        with calc_col2, st.container(border=True):
+            st.markdown("**Probability of Response Time Within an Interval**")
             b_col1, b_col2 = st.columns(2)
             lower_a = b_col1.number_input(
                 "Lower bound a (ms)",
@@ -218,132 +312,310 @@ else:
             )
             if lower_a <= upper_b:
                 prob_ab = interval_probability(estimated_rate, lower_a, upper_b)
-                interval_label = format_interval_label(lower_a, upper_b)
-                st.metric(
-                    interval_label,
-                    f"{prob_ab:.4f}",
-                    f"{prob_ab * 100:.2f}%",
+                st.markdown(f"**P({lower_a:g} ≤ X ≤ {upper_b:g} ms)**")
+                st.caption(
+                    r"$P(a\leq X\leq b)="
+                    r"e^{-\hat{\lambda}a}-e^{-\hat{\lambda}b}$"
                 )
+                st.markdown(f"### {prob_ab * 100:.2f}%")
+                st.caption(f"Decimal probability: {prob_ab:.6f}")
             else:
                 st.error("Lower bound a must be less than or equal to upper bound b.")
 
-        st.subheader("Interactive Distribution Graphs")
-        hist_bins = st.slider(
-            "Histogram bins",
-            min_value=5,
-            max_value=50,
-            value=20,
-            step=1,
-            key="hist_bins_slider",
+        st.subheader("Exponential Distribution Graph")
+        st.caption(
+            r"For response times, $f(x)=\lambda e^{-\lambda x}$ and "
+            r"$F(x)=P(X\leq x)=1-e^{-\lambda x}$, for $x\geq0$."
         )
+        bins_label, bins_slider = st.columns([1, 4])
+        current_bins = int(st.session_state.get("hist_bins_slider", 20))
+        bins_label.markdown(f"**Histogram bins** · {current_bins}")
+        with bins_slider:
+            hist_bins = st.slider(
+                "Histogram bins",
+                min_value=5,
+                max_value=50,
+                value=20,
+                step=1,
+                key="hist_bins_slider",
+                label_visibility="collapsed",
+            )
         hist_df = compute_histogram_data(cleaned_data[response_column], bins=hist_bins)
-        st.markdown("**Observed Response-Time Histogram**")
-        st.bar_chart(hist_df, x="bin_label", y="count")
-
         max_curve_time = float(max(float(statistics.maximum) * 1.05, estimated_mean * 3.5))
         curve_df = generate_distribution_curves(
             estimated_rate, max_time=max_curve_time, points=200
         )
+        histogram_chart_data = hist_df.assign(
+            series="Response time distribution",
+            time_ms=hist_df["bin_center"],
+            pdf=float("nan"),
+        )
+        pdf_chart_data = curve_df.assign(
+            series="Probability density function (PDF)",
+            bin_start=float("nan"),
+            bin_end=float("nan"),
+            bin_label="",
+            count=float("nan"),
+            density=float("nan"),
+        )
+        pdf_chart_data["time_ms"] = pdf_chart_data["time_ms"]
+        density_chart_data = pd.concat(
+            [histogram_chart_data, pdf_chart_data],
+            ignore_index=True,
+            sort=False,
+        )
+
+        chart_colors = {
+            "domain": ["Response time distribution", "Probability density function (PDF)"],
+            "range": ["#69a8ff", "#f2a65a"],
+        }
         graph_col1, graph_col2 = st.columns(2)
         with graph_col1:
-            st.markdown("**Theoretical Exponential PDF ($f(t) = \\lambda e^{-\\lambda t}$)**")
-            st.line_chart(curve_df, x="time_ms", y="pdf")
+            st.markdown("**Response Time Distribution · Probability Density Function (PDF)**")
+            st.caption(
+                r"Bars show the validated response times; the curve is the fitted "
+                r"$f(x)=\hat{\lambda}e^{-\hat{\lambda}x}$."
+            )
+            st.vega_lite_chart(
+                density_chart_data,
+                {
+                    "width": "container",
+                    "height": 320,
+                    "layer": [
+                        {
+                            "transform": [
+                                {"filter": "datum.series === 'Response time distribution'"}
+                            ],
+                            "mark": {"type": "bar", "opacity": 0.55},
+                            "encoding": {
+                                "x": {
+                                    "field": "bin_start",
+                                    "type": "quantitative",
+                                    "title": "Response Time (ms)",
+                                },
+                                "x2": {"field": "bin_end"},
+                                "y": {
+                                    "field": "density",
+                                    "type": "quantitative",
+                                    "title": "Probability Density (1/ms)",
+                                },
+                                "color": {
+                                    "field": "series",
+                                    "type": "nominal",
+                                    "scale": chart_colors,
+                                    "legend": {"title": None},
+                                },
+                                "tooltip": [
+                                    {"field": "bin_label", "type": "nominal", "title": "Bin"},
+                                    {"field": "count", "type": "quantitative", "title": "Count"},
+                                    {
+                                        "field": "density",
+                                        "type": "quantitative",
+                                        "title": "Probability Density (1/ms)",
+                                        "format": ".4f",
+                                    },
+                                ],
+                            },
+                        },
+                        {
+                            "transform": [
+                                {"filter": "datum.series === 'Probability density function (PDF)'"}
+                            ],
+                            "mark": {"type": "line", "strokeWidth": 3},
+                            "encoding": {
+                                "x": {
+                                    "field": "time_ms",
+                                    "type": "quantitative",
+                                    "title": "Response Time (ms)",
+                                },
+                                "y": {
+                                    "field": "pdf",
+                                    "type": "quantitative",
+                                    "title": "Probability Density (1/ms)",
+                                },
+                                "color": {
+                                    "field": "series",
+                                    "type": "nominal",
+                                    "scale": chart_colors,
+                                    "legend": {"title": None},
+                                },
+                                "tooltip": [
+                                    {
+                                        "field": "time_ms",
+                                        "type": "quantitative",
+                                        "title": "Time (ms)",
+                                        "format": ".2f",
+                                    },
+                                    {
+                                        "field": "pdf",
+                                        "type": "quantitative",
+                                        "title": "Probability Density (1/ms)",
+                                        "format": ".5f",
+                                    },
+                                ],
+                            },
+                        },
+                    ],
+                    "resolve": {"scale": {"y": "shared"}},
+                    "config": {
+                        "axis": {"labelColor": "#cbd5e1", "titleColor": "#e2e8f0"},
+                        "legend": {"labelColor": "#cbd5e1"},
+                    },
+                },
+                width="stretch",
+            )
         with graph_col2:
-            st.markdown("**Theoretical Exponential CDF ($F(t) = 1 - e^{-\\lambda t}$)**")
-            st.line_chart(curve_df, x="time_ms", y="cdf")
+            st.markdown("**Cumulative Distribution Function (CDF)**")
+            st.caption(r"Fitted model: $F(x)=1-e^{-\hat{\lambda}x}$.")
+            st.vega_lite_chart(
+                curve_df,
+                {
+                    "width": "container",
+                    "height": 320,
+                    "mark": {"type": "line", "color": "#69a8ff", "strokeWidth": 3},
+                    "encoding": {
+                        "x": {
+                            "field": "time_ms",
+                            "type": "quantitative",
+                            "title": "Response Time (ms)",
+                        },
+                        "y": {
+                            "field": "cdf",
+                            "type": "quantitative",
+                            "title": "Cumulative Probability",
+                            "scale": {"domain": [0, 1]},
+                            "axis": {"format": ".0%"},
+                        },
+                        "tooltip": [
+                            {
+                                "field": "time_ms",
+                                "type": "quantitative",
+                                "title": "Time (ms)",
+                                "format": ".2f",
+                            },
+                            {
+                                "field": "cdf",
+                                "type": "quantitative",
+                                "title": "Probability",
+                                "format": ".3%",
+                            },
+                        ],
+                    },
+                    "config": {
+                        "axis": {"labelColor": "#cbd5e1", "titleColor": "#e2e8f0"}
+                    },
+                },
+                width="stretch",
+            )
 
-        st.subheader("Observed vs. Theoretical Distribution Comparison")
-        st.markdown("**Empirical CDF vs. Theoretical CDF**")
+        st.subheader("Observed Data vs. Theoretical Distribution")
+        st.caption(
+            r"Observed values come from the validated dataset; the theoretical "
+            r"curve comes from the exponential distribution with rate "
+            r"$\hat{\lambda}$ estimated from those values."
+        )
+        st.markdown("**Observed Probability vs. Theoretical Probability**")
+        st.caption(
+            "The observed curve is the fraction of data at or below each response "
+            "time; the theoretical curve is the fitted model's cumulative probability."
+        )
         sorted_observations = (
             cleaned_data[response_column].sort_values().reset_index(drop=True)
         )
         ecdf_df = compute_ecdf_comparison(sorted_observations, estimated_rate)
-        st.line_chart(ecdf_df, x="time_ms", y=["Empirical CDF", "Theoretical CDF"])
+        cdf_comparison_data = pd.concat(
+            [
+                ecdf_df[["time_ms", "Empirical CDF"]]
+                .rename(columns={"Empirical CDF": "probability"})
+                .assign(series="Observed probability"),
+                ecdf_df[["time_ms", "Theoretical CDF"]]
+                .rename(columns={"Theoretical CDF": "probability"})
+                .assign(series="Theoretical probability"),
+            ],
+            ignore_index=True,
+        )
+        st.vega_lite_chart(
+            cdf_comparison_data,
+            {
+                "width": "container",
+                "height": 320,
+                "mark": {"type": "line", "strokeWidth": 2.5},
+                "encoding": {
+                    "x": {
+                        "field": "time_ms",
+                        "type": "quantitative",
+                        "title": "Response Time (ms)",
+                    },
+                    "y": {
+                        "field": "probability",
+                        "type": "quantitative",
+                        "title": "Cumulative Probability",
+                        "scale": {"domain": [0, 1]},
+                        "axis": {"format": ".0%"},
+                    },
+                    "color": {
+                        "field": "series",
+                        "type": "nominal",
+                        "scale": {
+                            "domain": ["Observed probability", "Theoretical probability"],
+                            "range": ["#69a8ff", "#f2a65a"],
+                        },
+                        "legend": {"title": None},
+                    },
+                    "tooltip": [
+                        {
+                            "field": "series",
+                            "type": "nominal",
+                            "title": "Curve",
+                        },
+                        {
+                            "field": "time_ms",
+                            "type": "quantitative",
+                            "title": "Time (ms)",
+                            "format": ".2f",
+                        },
+                        {
+                            "field": "probability",
+                            "type": "quantitative",
+                            "title": "Probability",
+                            "format": ".3%",
+                        },
+                    ],
+                },
+                "config": {
+                    "axis": {"labelColor": "#cbd5e1", "titleColor": "#e2e8f0"},
+                    "legend": {"labelColor": "#cbd5e1"},
+                },
+            },
+            width="stretch",
+        )
 
-        st.markdown("**Distribution Comparison Metrics**")
+        st.markdown("**Observed Data vs. Theoretical Distribution · Summary**")
         comparison_metrics = calculate_distribution_comparison_metrics(
             cleaned_data[response_column], estimated_rate
         )
         st.dataframe(comparison_metrics.to_frame(), width="stretch", hide_index=True)
 
-        st.subheader("Performance Analysis & SLA Evaluation")
-
-        st.markdown("**Latency Percentiles (Observed vs. Theoretical)**")
-        percentiles_df = calculate_percentiles(cleaned_data[response_column], estimated_rate)
-        disp_pct = percentiles_df.copy()
-        disp_pct["Observed (ms)"] = disp_pct["Observed_ms"].apply(lambda v: f"{v:.4f}")
-        disp_pct["Theoretical (ms)"] = disp_pct["Theoretical_ms"].apply(lambda v: f"{v:.4f}")
-        disp_pct["Difference (ms)"] = disp_pct["Difference_ms"].apply(lambda v: f"{v:+.4f}")
-        disp_pct["Relative Diff (%)"] = disp_pct["Relative_Difference_pct"].apply(lambda v: f"{v:+.2f}%")
-        st.dataframe(
-            disp_pct[["Percentile", "Observed (ms)", "Theoretical (ms)", "Difference (ms)", "Relative Diff (%)"]],
-            width="stretch",
-            hide_index=True,
+        percentiles_df = calculate_percentiles(
+            cleaned_data[response_column],
+            estimated_rate,
         )
-
-        st.markdown("**Service Level Agreement (SLA) Compliance**")
-        sla_col1, sla_col2 = st.columns(2)
-        default_sla_thresh = float(round(percentiles_df.loc[percentiles_df["Percentile"] == "P95", "Observed_ms"].iloc[0], 2))
-        sla_thresh_input = sla_col1.number_input(
-            "SLA response-time threshold (ms)",
-            min_value=0.1,
-            value=default_sla_thresh,
-            step=5.0,
-            key="sla_threshold_input",
-        )
-        sla_target_input = sla_col2.number_input(
-            "Target compliance percentage (%)",
-            min_value=1.0,
-            max_value=100.0,
-            value=95.0,
-            step=0.5,
-            key="sla_target_input",
+        default_sla_thresh = float(
+            round(
+                percentiles_df.loc[
+                    percentiles_df["Percentile"] == "P95",
+                    "Observed_ms",
+                ].iloc[0],
+                2,
+            )
         )
         sla_result = evaluate_sla_compliance(
             cleaned_data[response_column],
-            sla_threshold_ms=sla_thresh_input,
-            target_compliance_percentage=sla_target_input,
+            sla_threshold_ms=max(default_sla_thresh, 0.000001),
+            target_compliance_percentage=95.0,
         )
-
-        sla_m1, sla_m2, sla_m3, sla_m4 = st.columns(4)
-        sla_m1.metric("Target SLA", f"{sla_result.target_compliance_percentage:.1f}%")
-        sla_m2.metric(
-            "Actual Compliance",
-            f"{sla_result.actual_compliance_percentage:.2f}%",
-            delta=f"{sla_result.actual_compliance_percentage - sla_result.target_compliance_percentage:+.2f}%",
-        )
-        sla_m3.metric("Compliant Requests", f"{sla_result.compliant_requests:,} / {sla_result.total_requests:,}")
-        sla_m4.metric("Breached Requests", f"{sla_result.breached_requests:,}")
-
-        if sla_result.is_compliant:
-            st.success(
-                f"SLA Target Met: {sla_result.actual_compliance_percentage:.2f}% of requests met the "
-                f"{sla_result.sla_threshold_ms:.1f} ms threshold (target: {sla_result.target_compliance_percentage:.1f}%)."
-            )
-        else:
-            st.error(
-                f"SLA Target Breached: Only {sla_result.actual_compliance_percentage:.2f}% of requests met the "
-                f"{sla_result.sla_threshold_ms:.1f} ms threshold (target: {sla_result.target_compliance_percentage:.1f}%)."
-            )
-
-        candidate_group_cols = [c for c in cleaned_data.columns if c != response_column]
-        if candidate_group_cols:
-            st.markdown("**Sub-Group Performance Comparison**")
-            selected_group_col = st.selectbox(
-                "Compare performance across",
-                candidate_group_cols,
-                key="group_perf_col",
-            )
-            group_df = compare_group_performance(
-                cleaned_data,
-                response_column=response_column,
-                group_column=selected_group_col,
-                sla_threshold_ms=sla_thresh_input,
-            )
-            st.dataframe(group_df, width="stretch", hide_index=True)
-        else:
-            group_df = None
-            selected_group_col = None
+        group_df = None
+        selected_group_col = None
 
         json_report_str = generate_json_report(
             source_kind=source_kind,
@@ -356,7 +628,7 @@ else:
             sla_result=sla_result,
             comparison_metrics=comparison_metrics,
             group_comparison_df=group_df,
-            group_column=selected_group_col if candidate_group_cols else None,
+            group_column=selected_group_col,
         )
         md_report_str = generate_markdown_report(
             source_kind=source_kind,
@@ -369,7 +641,7 @@ else:
             sla_result=sla_result,
             comparison_metrics=comparison_metrics,
             group_comparison_df=group_df,
-            group_column=selected_group_col if candidate_group_cols else None,
+            group_column=selected_group_col,
         )
         summary_csv_str = generate_summary_csv(
             descriptive_stats=statistics,

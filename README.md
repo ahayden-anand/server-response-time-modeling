@@ -11,7 +11,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Choose **Upload CSV** to preview data and select its response-time column, or **Generate sample** to make reproducible exponential response times with a sample count, rate, and seed. The interface displays total, valid, and removed rows, a validation table, the cleaned data, a cleaned-CSV download, descriptive statistics, and an estimated exponential rate based on the cleaned observations.
+Choose **Upload CSV** to preview data and select its response-time column, or **Generate sample** to make reproducible exponential response times with a sample count, rate, and seed. The dashboard summarizes validated observations, fits an exponential model, calculates threshold and interval probabilities, and visualizes the observed histogram alongside the fitted density and CDF. Metric cards show compact formulas inline; percentile comparisons, SLA evaluation, subgroup comparisons, and analysis downloads are also available.
 
 ## Data rules
 
